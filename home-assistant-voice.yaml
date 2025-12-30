@@ -33,6 +33,9 @@ substitutions:
   easter_egg_tick_sound_file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/easter_egg_tick.mp3
   easter_egg_tada_sound_file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/easter_egg_tada.mp3
   error_cloud_expired_sound_file: https://github.com/esphome/home-assistant-voice-pe/raw/dev/sounds/error_cloud_expired.mp3
+  # Optional Home Assistant media_player entity to control with the dial/button.
+  # Example: media_player.sonos_tv (leave as media_player.none to use the device player)
+  control_media_player_entity: "media_player.none"
 
 esphome:
   name: home-assistant-voice
@@ -324,24 +327,33 @@ binary_sensor:
                                 else:
                                   - if:
                                       condition:
-                                        media_player.is_playing:
-                                          id: external_media_player
+                                        lambda: return strcmp("${control_media_player_entity}", "media_player.none") != 0;
                                       then:
-                                        - media_player.pause:
-                                            id: external_media_player
+                                        - homeassistant.service:
+                                            service: media_player.media_play_pause
+                                            data:
+                                              entity_id: ${control_media_player_entity}
                                       else:
                                         - if:
                                             condition:
-                                              and:
-                                                - switch.is_off: master_mute_switch
-                                                - not: voice_assistant.is_running
+                                              media_player.is_playing:
+                                                id: external_media_player
                                             then:
-                                              - script.execute:
-                                                  id: play_sound
-                                                  priority: true
-                                                  sound_file: "center_button_press_sound"
-                                              - delay: 300ms
-                                              - voice_assistant.start:
+                                              - media_player.pause:
+                                                  id: external_media_player
+                                            else:
+                                              - if:
+                                                  condition:
+                                                    and:
+                                                      - switch.is_off: master_mute_switch
+                                                      - not: voice_assistant.is_running
+                                                  then:
+                                                    - script.execute:
+                                                        id: play_sound
+                                                        priority: true
+                                                        sound_file: "center_button_press_sound"
+                                                    - delay: 300ms
+                                                    - voice_assistant.start:
       # Double Click
       #  . Exposed as an event entity. To be used in automations inside Home Assistant
       - timing:
@@ -491,6 +503,13 @@ binary_sensor:
                     effect: "none"
                 - lambda: id(factory_reset_requested) = true;
 
+  # Control media player mute state from Home Assistant (used for LED ring).
+  - platform: homeassistant
+    id: control_media_player_muted
+    entity_id: ${control_media_player_entity}
+    attribute: is_volume_muted
+    on_state:
+      - script.execute: control_leds
   # Hardware mute switch (Side of the device)
   - platform: gpio
     id: hardware_mute_switch
@@ -692,6 +711,15 @@ light:
             auto light_color = id(led_ring).current_values;
             Color color(light_color.get_red() * 255, light_color.get_green() * 255,
                   light_color.get_blue() * 255);
+            bool use_control = strcmp("${control_media_player_entity}", "media_player.none") != 0;
+            float media_volume = id(external_media_player).volume;
+            bool media_muted = id(external_media_player).is_muted();
+            if (use_control && id(control_media_player_volume).has_state() && !isnan(id(control_media_player_volume).state)) {
+              media_volume = id(control_media_player_volume).state;
+            }
+            if (use_control && id(control_media_player_muted).has_state()) {
+              media_muted = id(control_media_player_muted).state;
+            }
             for (uint8_t i = 0; i < 12; i++) {
               if ( light_color.get_state() ) {
                 it[i] = color;
@@ -707,7 +735,7 @@ light:
               it[9] = muted_color;
               it[10] = Color::BLACK;
             }
-            if ( id(external_media_player).volume == 0.0f || id(external_media_player).is_muted() ) {
+            if (media_volume == 0.0f || media_muted) {
               it[5] = Color::BLACK;
               it[6] = muted_color;
               it[7] = Color::BLACK;
@@ -733,7 +761,12 @@ light:
             Color color(light_color.get_red() * 255, light_color.get_green() * 255,
                   light_color.get_blue() * 255);
             Color silenced_color(255, 0, 0);
-            auto volume_ratio = 12.0f * id(external_media_player).volume;
+            bool use_control = strcmp("${control_media_player_entity}", "media_player.none") != 0;
+            float media_volume = id(external_media_player).volume;
+            if (use_control && id(control_media_player_volume).has_state() && !isnan(id(control_media_player_volume).state)) {
+              media_volume = id(control_media_player_volume).state;
+            }
+            auto volume_ratio = 12.0f * media_volume;
             for (uint8_t i = 0; i < 12; i++) {
               if (i <= volume_ratio) {
                 it[(6+i)%12] = color * min( 255.0f * (volume_ratio - i) , 255.0f ) ;
@@ -741,7 +774,7 @@ light:
                 it[(6+i)%12] = Color::BLACK;
               }
             }
-            if (id(external_media_player).volume == 0.0f) {
+            if (media_volume == 0.0f) {
               it[6] = silenced_color;
             }
       - addressable_lambda:
@@ -1008,6 +1041,12 @@ sensor:
                   - script.execute:
                       id: control_hue
                       increase_hue: false
+  - platform: homeassistant
+    id: control_media_player_volume
+    entity_id: ${control_media_player_entity}
+    attribute: volume_level
+    on_value:
+      - script.execute: control_leds
 
 event:
   # Event entity exposed to the user to automate on complex center button presses.
@@ -1037,6 +1076,15 @@ script:
           id(check_if_timers_active).execute();
           if (id(is_timer_active)){
             id(fetch_first_active_timer).execute();
+          }
+          bool use_control = strcmp("${control_media_player_entity}", "media_player.none") != 0;
+          float media_volume = id(external_media_player).volume;
+          bool media_muted = id(external_media_player).is_muted();
+          if (use_control && id(control_media_player_volume).has_state() && !isnan(id(control_media_player_volume).state)) {
+            media_volume = id(control_media_player_volume).state;
+          }
+          if (use_control && id(control_media_player_muted).has_state()) {
+            media_muted = id(control_media_player_muted).state;
           }
           if (id(improv_ble_in_progress)) {
             id(control_leds_improv_ble_state).execute();
@@ -1070,7 +1118,7 @@ script:
             id(control_leds_timer_ticking).execute();
           } else if (id(master_mute_switch).state) {
             id(control_leds_muted_or_silent).execute();
-          } else if (id(external_media_player).volume == 0.0f || id(external_media_player).is_muted()) {
+          } else if (media_volume == 0.0f || media_muted) {
             id(control_leds_muted_or_silent).execute();
           } else if (id(voice_assistant_phase) == ${voice_assist_idle_phase_id}) {
             id(control_leds_voice_assistant_idle_phase).execute();
@@ -1280,11 +1328,29 @@ script:
           condition:
             lambda: return increase_volume;
           then:
-            - media_player.volume_up:
-                id: external_media_player
+            - if:
+                condition:
+                  lambda: return strcmp("${control_media_player_entity}", "media_player.none") != 0;
+                then:
+                  - homeassistant.service:
+                      service: media_player.volume_up
+                      data:
+                        entity_id: ${control_media_player_entity}
+                else:
+                  - media_player.volume_up:
+                      id: external_media_player
           else:
-            - media_player.volume_down:
-                id: external_media_player
+            - if:
+                condition:
+                  lambda: return strcmp("${control_media_player_entity}", "media_player.none") != 0;
+                then:
+                  - homeassistant.service:
+                      service: media_player.volume_down
+                      data:
+                        entity_id: ${control_media_player_entity}
+                else:
+                  - media_player.volume_down:
+                      id: external_media_player
       - script.execute: control_leds
       - delay: 1s
       - lambda: id(dial_touched) = false;
