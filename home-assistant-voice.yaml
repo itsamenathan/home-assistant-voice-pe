@@ -355,7 +355,7 @@ binary_sensor:
                                                     - delay: 300ms
                                                     - voice_assistant.start:
       # Double Click
-      #  . Exposed as an event entity. To be used in automations inside Home Assistant
+      #  . Send next track command to media player
       - timing:
           - ON for at most 1s
           - OFF for at most 0.25s
@@ -370,11 +370,22 @@ binary_sensor:
                     id: play_sound
                     priority: false
                     sound_file: "center_button_double_press_sound"
+                - if:
+                    condition:
+                      lambda: return strcmp("${control_media_player_entity}", "media_player.none") != 0;
+                    then:
+                      - homeassistant.service:
+                          service: media_player.media_next_track
+                          data:
+                            entity_id: ${control_media_player_entity}
+                    else:
+                      - media_player.next:
+                          id: external_media_player
                 - event.trigger:
                     id: button_press_event
                     event_type: "double_press"
       # Triple Click
-      #  . Exposed as an event entity. To be used in automations inside Home Assistant
+      #  . Toggle shuffle on media player
       - timing:
           - ON for at most 1s
           - OFF for at most 0.25s
@@ -391,6 +402,18 @@ binary_sensor:
                     id: play_sound
                     priority: false
                     sound_file: "center_button_triple_press_sound"
+                - if:
+                    condition:
+                      lambda: return strcmp("${control_media_player_entity}", "media_player.none") != 0;
+                    then:
+                      - homeassistant.service:
+                          service: media_player.shuffle_set
+                          data:
+                            entity_id: ${control_media_player_entity}
+                            shuffle: true
+                    else:
+                      - media_player.toggle_shuffle:
+                          id: external_media_player
                 - event.trigger:
                     id: button_press_event
                     event_type: "triple_press"
