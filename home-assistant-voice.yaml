@@ -410,7 +410,7 @@ binary_sensor:
                           service: media_player.shuffle_set
                           data:
                             entity_id: ${control_media_player_entity}
-                            shuffle: true
+                            shuffle: "true"
                     else:
                       - media_player.toggle_shuffle:
                           id: external_media_player
